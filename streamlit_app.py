@@ -1,6 +1,8 @@
 """Streamlit application for exploring EV financial scenarios."""
 
 from dataclasses import replace
+from pathlib import Path
+import sys
 from typing import Dict, Optional
 
 import pandas as pd
@@ -10,6 +12,19 @@ try:  # pragma: no cover - optional for charting
     import altair as alt
 except Exception:  # pragma: no cover - graceful fallback when Altair missing
     alt = None
+
+
+# Ensure the repository's ``src`` directory is on ``sys.path`` so the packaged
+# ``ev_model`` module is importable when the app is executed with ``streamlit``
+# from the project root or an arbitrary working directory. This mirrors the
+# layout used by the test suite and avoids requiring an editable install before
+# running the dashboard locally.
+_SRC_PATH = Path(__file__).resolve().parent / "src"
+if _SRC_PATH.exists():  # pragma: no cover - filesystem guard for deployment
+    _src_str = str(_SRC_PATH)
+    if _src_str not in sys.path:
+        sys.path.insert(0, _src_str)
+
 
 from ev_model import (
     EVComparisonAnalyzer,
