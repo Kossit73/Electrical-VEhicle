@@ -5,6 +5,7 @@ from ev_model.finance import (
     DepreciationMethod,
     DepreciationParameters,
     EVAcquisitionCalculator,
+    EVEnergyCostsCalculator,
     EVOperatingCostsCalculator,
     EVVehicleSpecs,
     EnergyParameters,
@@ -67,7 +68,7 @@ def test_operating_cost_calculator(sample_vehicle: EVVehicleSpecs, sample_energy
     energy_cost = operating.annual_energy_cost()
     maintenance_cost = operating.annual_maintenance_cost()
 
-    assert energy_cost == pytest.approx(649.38, rel=1e-3)
+    assert energy_cost == pytest.approx(714.8077, rel=1e-4)
     assert maintenance_cost == pytest.approx(675.0)
 
     schedule = operating.detailed_operating_costs(years=5)
@@ -83,7 +84,8 @@ def test_operating_cost_calculator(sample_vehicle: EVVehicleSpecs, sample_energy
         "total_operating_cost",
     ]
     assert schedule.iloc[0]["total_operating_cost"] == pytest.approx(2155.0)
-    assert schedule.iloc[2]["tire_replacement"] == pytest.approx(936.36, rel=1e-3)
+    assert schedule.loc[schedule["year"] == 4, "tire_replacement"].iloc[0] == pytest.approx(600.0)
+    assert schedule.loc[schedule["year"] == 5, "tire_replacement"].iloc[0] == pytest.approx(0.0)
 
     lifetime = operating.lifetime_operating_cost(5)
     assert lifetime["maintenance_cost"] == pytest.approx(schedule["maintenance_cost"].sum())
@@ -98,10 +100,31 @@ def test_ev_operating_costs_calculator_handles_warranty(sample_vehicle: EVVehicl
     calc = EVOperatingCostsCalculator(sample_vehicle)
     df = calc.calculate_annual_operating_costs(annual_miles=15000, years=9)
 
-    assert df.loc[df["year"] == 7, "battery_cost"].iloc[0] == pytest.approx(300.0)
-    assert df.loc[df["year"] == 8, "battery_cost"].iloc[0] == pytest.approx(900.0)
-    assert df.loc[df["year"] == 9, "battery_cost"].iloc[0] == pytest.approx(1650.0)
-    assert df.loc[df["year"] == 9, "tire_replacement"].iloc[0] > 0
+    assert df.loc[df["year"] == 7, "battery_cost"].iloc[0] == pytest.approx(0.0)
+    assert df.loc[df["year"] == 8, "battery_cost"].iloc[0] == pytest.approx(0.0)
+    assert df.loc[df["year"] == 9, "battery_cost"].iloc[0] == pytest.approx(600.0)
+    assert df.loc[df["year"] == 4, "tire_replacement"].iloc[0] == pytest.approx(600.0)
+
+
+def test_energy_cost_schedule_breakdown(sample_vehicle: EVVehicleSpecs, sample_energy: EnergyParameters) -> None:
+    calculator = EVEnergyCostsCalculator(sample_vehicle, sample_energy)
+    schedule = calculator.calculate_annual_energy_cost(years=3)
+
+    assert list(schedule.columns) == [
+        "year",
+        "annual_miles",
+        "total_kwh",
+        "home_kwh",
+        "dc_kwh",
+        "level2_kwh",
+        "home_charging_cost",
+        "dc_charging_cost",
+        "level2_charging_cost",
+        "total_energy_cost",
+        "cost_per_mile",
+    ]
+    assert schedule.iloc[0]["dc_charging_cost"] == pytest.approx(210.8077, rel=1e-4)
+    assert schedule.iloc[1]["total_energy_cost"] == pytest.approx(schedule.iloc[0]["total_energy_cost"])
 
 
 def test_depreciation_schedules() -> None:

@@ -264,8 +264,8 @@ class EVAcquisitionCalculator:
 class EVOperatingCostsCalculator:
     """Calculate operating costs for electric vehicles with detailed projections."""
 
-    _TIRE_REPLACEMENT_INTERVAL_MILES = 42_000
-    _TIRE_REPLACEMENT_COST = 900.0
+    _TIRE_LIFE_MILES = 50_000
+    _TIRE_COST_PER_TIRE = 150.0
 
     def __init__(self, vehicle: EVVehicleSpecs):
         self.vehicle = vehicle
@@ -331,41 +331,95 @@ class EVOperatingCostsCalculator:
 
     # ------------------------------------------------------------------
     # Internal helpers
-    def _battery_reserve_fraction(self, year: int, annual_miles: float) -> float:
-        cumulative_miles = annual_miles * year
-        warranty_miles = max(self.vehicle.warranty_miles, 1.0)
-        warranty_years = max(self.vehicle.warranty_years, 1)
-
-        mileage_fraction = max(0.0, (cumulative_miles - self.vehicle.warranty_miles) / warranty_miles)
-        time_fraction = max(0.0, year - self.vehicle.warranty_years) / warranty_years
-
-        return min(1.0, 0.5 * min(mileage_fraction, 1.0) + 0.5 * min(time_fraction, 1.0))
-
     def _calculate_battery_costs(self, year: int, annual_miles: float) -> float:
+        """Estimate battery reserves once warranty coverage lapses."""
+
         if self.vehicle.battery_replacement_cost <= 0:
             return 0.0
 
-        current_fraction = self._battery_reserve_fraction(year, annual_miles)
-        previous_fraction = (
-            self._battery_reserve_fraction(year - 1, annual_miles) if year > 1 else 0.0
-        )
-
-        incremental_fraction = max(current_fraction - previous_fraction, 0.0)
-        return incremental_fraction * self.vehicle.battery_replacement_cost
-
-    def _calculate_tire_replacement_cost(self, year: int, annual_miles: float) -> float:
-        cumulative_miles = annual_miles * year
-        previous_miles = annual_miles * (year - 1)
-
-        replacements_to_date = int(cumulative_miles // self._TIRE_REPLACEMENT_INTERVAL_MILES)
-        replacements_previous = int(previous_miles // self._TIRE_REPLACEMENT_INTERVAL_MILES)
-
-        replacements_this_year = max(replacements_to_date - replacements_previous, 0)
-        if replacements_this_year == 0:
+        if year <= self.vehicle.warranty_years:
             return 0.0
 
-        inflation_factor = 1.02 ** (year - 1)
-        return replacements_this_year * self._TIRE_REPLACEMENT_COST * inflation_factor
+        years_past_warranty = year - self.vehicle.warranty_years
+        reserve_rate = 0.05  # 5% annual reserve for potential post-warranty replacement
+        battery_cost = self.vehicle.battery_replacement_cost * reserve_rate * years_past_warranty
+        return max(0.0, battery_cost)
+
+    def _calculate_tire_replacement_cost(self, year: int, annual_miles: float) -> float:
+        """Estimate tyre replacement costs based on cumulative mileage."""
+
+        cumulative_miles = annual_miles * year
+        previous_miles = annual_miles * (year - 1)
+        tire_replacement_cost = self._TIRE_COST_PER_TIRE * 4
+
+        if self._TIRE_LIFE_MILES <= 0:
+            return 0.0
+
+        replacements = int(cumulative_miles / self._TIRE_LIFE_MILES)
+        previous_replacements = int(previous_miles / self._TIRE_LIFE_MILES)
+        replacements_this_year = max(0, replacements - previous_replacements)
+        return replacements_this_year * tire_replacement_cost
+
+
+class EVEnergyCostsCalculator:
+    """Calculate annual EV energy usage and charging costs."""
+
+    def __init__(self, vehicle: EVVehicleSpecs, energy_params: EnergyParameters):
+        energy_params.validate()
+        self.vehicle = vehicle
+        self.energy_params = energy_params
+
+    def calculate_annual_energy_cost(self, years: int = 10) -> pd.DataFrame:
+        """Return a schedule of annual energy usage by charging method."""
+
+        if years <= 0:
+            raise ValueError("Years must be positive for energy cost projections")
+
+        results: List[Dict[str, float]] = []
+
+        for year in range(1, years + 1):
+            annual_miles = self.energy_params.annual_miles_driven
+            total_kwh_needed = annual_miles * self.vehicle.efficiency_kwh_per_mile
+
+            home_kwh = (
+                total_kwh_needed
+                * self.energy_params.percent_home_charged
+                / self.energy_params.home_charging_efficiency
+            )
+            dc_kwh = (
+                total_kwh_needed
+                * self.energy_params.percent_dc_charged
+                / self.energy_params.dc_fast_charging_efficiency
+            )
+            level2_kwh = (
+                total_kwh_needed
+                * self.energy_params.percent_level2_charged
+                / self.energy_params.home_charging_efficiency
+            )
+
+            home_cost = home_kwh * self.energy_params.electricity_rate_per_kwh
+            dc_cost = dc_kwh * self.energy_params.electricity_rate_per_kwh * 1.45
+            level2_cost = level2_kwh * self.energy_params.electricity_rate_per_kwh
+            total_energy_cost = home_cost + dc_cost + level2_cost
+            cost_per_mile = total_energy_cost / annual_miles if annual_miles > 0 else 0.0
+
+            results.append(
+                {
+                    "year": year,
+                    "annual_miles": annual_miles,
+                    "total_kwh": total_kwh_needed,
+                    "home_kwh": home_kwh,
+                    "dc_kwh": dc_kwh,
+                    "level2_kwh": level2_kwh,
+                    "home_charging_cost": home_cost,
+                    "dc_charging_cost": dc_cost,
+                    "level2_charging_cost": level2_cost,
+                    "total_energy_cost": total_energy_cost,
+                    "cost_per_mile": cost_per_mile,
+                }
+            )
+
+        return pd.DataFrame(results)
 
 
 class OperatingCostCalculator:
@@ -377,35 +431,26 @@ class OperatingCostCalculator:
         energy: EnergyParameters,
         maintenance_inflation_rate: float = 0.02,
     ):
-        energy.validate()
         self.vehicle = vehicle
         self.energy = energy
         self.maintenance_inflation_rate = maintenance_inflation_rate
+        self.energy_costs = EVEnergyCostsCalculator(vehicle, energy)
 
     def annual_energy_consumption(self) -> Dict[str, float]:
-        miles = self.energy.annual_miles_driven
-        home_miles = miles * self.energy.percent_home_charged
-        dc_miles = miles * self.energy.percent_dc_charged
-        level2_miles = miles * self.energy.percent_level2_charged
-
-        home_kwh = home_miles * self.vehicle.efficiency_kwh_per_mile / self.energy.home_charging_efficiency
-        dc_kwh = dc_miles * self.vehicle.efficiency_kwh_per_mile / self.energy.dc_fast_charging_efficiency
-        # Level2 assumed to share efficiency with home charging for simplicity.
-        level2_kwh = level2_miles * self.vehicle.efficiency_kwh_per_mile / self.energy.home_charging_efficiency
-
-        total_kwh = home_kwh + dc_kwh + level2_kwh
+        schedule = self.energy_costs.calculate_annual_energy_cost(years=1)
+        row = schedule.iloc[0] if len(schedule) else {}
         return {
-            "home_kwh": home_kwh,
-            "dc_fast_kwh": dc_kwh,
-            "level2_kwh": level2_kwh,
-            "total_kwh": total_kwh,
+            "home_kwh": float(row.get("home_kwh", 0.0)),
+            "dc_fast_kwh": float(row.get("dc_kwh", 0.0)),
+            "level2_kwh": float(row.get("level2_kwh", 0.0)),
+            "total_kwh": float(row.get("total_kwh", 0.0)),
         }
 
     def annual_energy_cost(self) -> float:
-        usage = self.annual_energy_consumption()
-        cost = usage["total_kwh"] * self.energy.electricity_rate_per_kwh
-        logger.debug("Annual energy consumption %s leading to cost %.2f", usage, cost)
-        return cost
+        schedule = self.energy_costs.calculate_annual_energy_cost(years=1)
+        total_cost = float(schedule.iloc[0]["total_energy_cost"]) if len(schedule) else 0.0
+        logger.debug("Annual energy cost schedule %s", schedule.iloc[0] if len(schedule) else {})
+        return total_cost
 
     def annual_maintenance_cost(self) -> float:
         cost = self.vehicle.maintenance_cost_per_mile * self.energy.annual_miles_driven
@@ -432,9 +477,15 @@ class OperatingCostCalculator:
             years=years,
         )
 
+    def energy_cost_schedule(self, years: int) -> pd.DataFrame:
+        """Return a detailed energy cost schedule for the requested horizon."""
+
+        return self.energy_costs.calculate_annual_energy_cost(years)
+
     def lifetime_operating_cost(self, years: int) -> Dict[str, float]:
         schedule = self.detailed_operating_costs(years)
-        energy_cost = self.annual_energy_cost() * years
+        energy_schedule = self.energy_costs.calculate_annual_energy_cost(years)
+        energy_cost = float(energy_schedule["total_energy_cost"].sum())
         maintenance_cost = float(schedule["maintenance_cost"].sum())
         insurance_cost = float(schedule["insurance_cost"].sum())
         registration_cost = float(schedule["registration_fee"].sum())
