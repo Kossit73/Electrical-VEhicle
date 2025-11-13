@@ -137,6 +137,10 @@ def test_depreciation_schedules() -> None:
     assert [row["depreciation"] for row in schedule] == pytest.approx([6800.0] * 5)
     assert schedule[-1]["book_value"] == pytest.approx(6000.0)
 
+    df = DepreciationCalculator(40000, params).dataframe()
+    assert "residual_value_percent" in df.columns
+    assert df.iloc[-1]["book_value"] == pytest.approx(6000.0)
+
     declining = DepreciationParameters(
         method=DepreciationMethod.DECLINING_BALANCE,
         useful_life_years=5,

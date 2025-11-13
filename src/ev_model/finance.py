@@ -78,6 +78,11 @@ except ModuleNotFoundError:  # pragma: no cover - minimal fallback when pandas u
         def __len__(self) -> int:
             return len(self._rows)
 
+        def to_dict(self, orient: str = "records") -> List[Dict[str, float]]:
+            if orient != "records":  # pragma: no cover - unused orientation in fallback
+                raise NotImplementedError("_MiniDataFrame only supports records orientation")
+            return [dict(row) for row in self._rows]
+
     class _MiniPandasModule:
         DataFrame = _MiniDataFrame
 
@@ -175,14 +180,15 @@ class DepreciationParameters:
     method: DepreciationMethod
     useful_life_years: int
     salvage_value: float = 0.0
-    declining_balance_rate: float = 0.2
+    declining_balance_rate: Optional[float] = None
+    annual_miles: float = 12000.0
     market_value_curve: Optional[List[float]] = None
 
     def __post_init__(self) -> None:
         if self.useful_life_years <= 0:
             raise ValueError("Useful life must be a positive integer")
-        if self.method is DepreciationMethod.MARKET_BASED and not self.market_value_curve:
-            raise ValueError("Market based depreciation requires a value curve")
+        if self.annual_miles < 0:
+            raise ValueError("Annual miles cannot be negative")
 
 
 class EVAcquisitionCalculator:
@@ -506,62 +512,267 @@ class OperatingCostCalculator:
 class DepreciationCalculator:
     """Produce depreciation schedules under different methodologies."""
 
-    def __init__(self, purchase_price: float, params: DepreciationParameters):
+    def __init__(
+        self,
+        purchase_price: float,
+        params: DepreciationParameters,
+        vehicle_type: VehicleType = VehicleType.ELECTRIC,
+    ):
         self.purchase_price = purchase_price
         self.params = params
+        self.vehicle_type = vehicle_type
+
+    def calculate_depreciation(
+        self,
+        initial_value: float,
+        years: int = 10,
+        method: DepreciationMethod = DepreciationMethod.MARKET_BASED,
+        annual_miles: float = 12000,
+        salvage_value: float = 0.0,
+        declining_balance_rate: Optional[float] = None,
+        market_value_curve: Optional[List[float]] = None,
+    ) -> pd.DataFrame:
+        """Calculate depreciation using the specified method."""
+
+        if years <= 0:
+            raise ValueError("Years must be a positive integer")
+
+        if method is DepreciationMethod.STRAIGHT_LINE:
+            rows = self._straight_line_depreciation(initial_value, years, salvage_value)
+        elif method is DepreciationMethod.DECLINING_BALANCE:
+            rows = self._declining_balance_depreciation(
+                initial_value,
+                years,
+                salvage_value,
+                declining_balance_rate,
+            )
+        else:
+            rows = self._market_based_depreciation(
+                initial_value,
+                years,
+                annual_miles,
+                salvage_value,
+                market_value_curve,
+            )
+
+        return pd.DataFrame(rows)
 
     def schedule(self) -> List[Dict[str, float]]:
-        method = self.params.method
-        if method is DepreciationMethod.STRAIGHT_LINE:
-            rows = self._straight_line_schedule()
-        elif method is DepreciationMethod.DECLINING_BALANCE:
-            rows = self._declining_balance_schedule()
-        else:
-            rows = self._market_based_schedule()
-        return rows
+        """Backwards compatible schedule representation used across the package."""
 
-    def _straight_line_schedule(self) -> List[Dict[str, float]]:
-        annual = (self.purchase_price - self.params.salvage_value) / self.params.useful_life_years
-        book_value = self.purchase_price
-        rows = []
-        for year in range(1, self.params.useful_life_years + 1):
-            book_value = max(book_value - annual, self.params.salvage_value)
-            rows.append({"year": year, "depreciation": annual, "book_value": book_value})
-        return rows
+        dataframe = self.calculate_depreciation(
+            initial_value=self.purchase_price,
+            years=self.params.useful_life_years,
+            method=self.params.method,
+            annual_miles=self.params.annual_miles,
+            salvage_value=self.params.salvage_value,
+            declining_balance_rate=self.params.declining_balance_rate,
+            market_value_curve=self.params.market_value_curve,
+        )
 
-    def _declining_balance_schedule(self) -> List[Dict[str, float]]:
-        rate = self.params.declining_balance_rate
+        return [
+            {
+                "year": int(row["year"]),
+                "depreciation": float(row["depreciation_amount"]),
+                "book_value": float(row["book_value"]),
+                "cumulative_depreciation": float(row["cumulative_depreciation"]),
+            }
+            for row in dataframe.to_dict("records")
+        ]
+
+    def dataframe(self) -> pd.DataFrame:
+        """Return the depreciation schedule as a DataFrame for further analysis."""
+
+        return self.calculate_depreciation(
+            initial_value=self.purchase_price,
+            years=self.params.useful_life_years,
+            method=self.params.method,
+            annual_miles=self.params.annual_miles,
+            salvage_value=self.params.salvage_value,
+            declining_balance_rate=self.params.declining_balance_rate,
+            market_value_curve=self.params.market_value_curve,
+        )
+
+    def _straight_line_depreciation(
+        self,
+        initial_value: float,
+        years: int,
+        salvage_value: float,
+    ) -> List[Dict[str, float]]:
+        """Straight-line depreciation: equal annual reduction."""
+
+        salvage_value = min(salvage_value, initial_value)
+        base_value = max(initial_value - salvage_value, 0.0)
+        annual_depreciation = base_value / years
+        results: List[Dict[str, float]] = []
+
+        for year in range(1, years + 1):
+            book_value = max(salvage_value, initial_value - annual_depreciation * year)
+            cumulative = initial_value - book_value
+            results.append(
+                {
+                    "year": year,
+                    "depreciation_amount": annual_depreciation,
+                    "cumulative_depreciation": cumulative,
+                    "book_value": book_value,
+                    "residual_value_percent": (book_value / initial_value) * 100,
+                }
+            )
+
+        return results
+
+    def _declining_balance_depreciation(
+        self,
+        initial_value: float,
+        years: int,
+        salvage_value: float,
+        rate_override: Optional[float],
+    ) -> List[Dict[str, float]]:
+        """Double declining balance depreciation: faster initial depreciation."""
+
+        salvage_value = min(salvage_value, initial_value)
+        rate = rate_override if rate_override is not None else 2 / (years + 1)
         if not 0 < rate < 1:
             raise ValueError("Declining balance rate must be between 0 and 1")
-        book_value = self.purchase_price
-        rows = []
-        for year in range(1, self.params.useful_life_years + 1):
-            depreciation = (book_value - self.params.salvage_value) * rate
-            book_value = max(book_value - depreciation, self.params.salvage_value)
-            rows.append({"year": year, "depreciation": depreciation, "book_value": book_value})
-        return rows
 
-    def _market_based_schedule(self) -> List[Dict[str, float]]:
-        curve = self.params.market_value_curve or []
-        rows = []
-        previous_value = self.purchase_price
-        for year, residual in enumerate(curve, start=1):
-            residual_value = residual * self.purchase_price
-            residual_value = max(residual_value, self.params.salvage_value)
+        results: List[Dict[str, float]] = []
+        book_value = initial_value
+        cumulative = 0.0
+
+        for year in range(1, years + 1):
+            annual_depreciation = book_value * rate
+            next_book_value = book_value - annual_depreciation
+            if next_book_value < salvage_value:
+                annual_depreciation = book_value - salvage_value
+                next_book_value = salvage_value
+
+            cumulative += annual_depreciation
+            book_value = next_book_value
+
+            results.append(
+                {
+                    "year": year,
+                    "depreciation_amount": annual_depreciation,
+                    "cumulative_depreciation": cumulative,
+                    "book_value": book_value,
+                    "residual_value_percent": max(0.0, (book_value / initial_value) * 100),
+                }
+            )
+
+        return results
+
+    def _market_based_depreciation(
+        self,
+        initial_value: float,
+        years: int,
+        annual_miles: float,
+        salvage_value: float,
+        market_value_curve: Optional[List[float]],
+    ) -> List[Dict[str, float]]:
+        """Market-based depreciation using empirical EV depreciation curves."""
+
+        salvage_value = min(salvage_value, initial_value)
+        if market_value_curve:
+            return self._curve_based_depreciation(
+                initial_value,
+                years,
+                salvage_value,
+                market_value_curve,
+            )
+
+        depreciation_schedule = {
+            1: 0.18,
+            2: 0.10,
+            3: 0.10,
+            4: 0.08,
+            5: 0.08,
+            6: 0.06,
+            7: 0.05,
+            8: 0.05,
+            9: 0.04,
+            10: 0.04,
+        }
+
+        results: List[Dict[str, float]] = []
+        book_value = initial_value
+        cumulative = 0.0
+
+        for year in range(1, years + 1):
+            rate = depreciation_schedule.get(year, 0.03)
+            annual_depreciation = book_value * rate
+            next_book_value = book_value - annual_depreciation
+
+            cumulative_miles = annual_miles * year
+            if cumulative_miles > 150000:
+                mileage_factor = (cumulative_miles - 150000) / 1_000_000
+                additional_rate = min(0.10, mileage_factor * 0.05)
+                additional_depreciation = book_value * additional_rate
+                next_book_value -= additional_depreciation
+                annual_depreciation += additional_depreciation
+
+            if next_book_value < salvage_value:
+                annual_depreciation = book_value - salvage_value
+                next_book_value = salvage_value
+
+            cumulative += annual_depreciation
+            book_value = next_book_value
+
+            results.append(
+                {
+                    "year": year,
+                    "depreciation_amount": annual_depreciation,
+                    "cumulative_depreciation": cumulative,
+                    "book_value": book_value,
+                    "residual_value_percent": max(0.0, (book_value / initial_value) * 100),
+                }
+            )
+
+        return results
+
+    def _curve_based_depreciation(
+        self,
+        initial_value: float,
+        years: int,
+        salvage_value: float,
+        market_value_curve: List[float],
+    ) -> List[Dict[str, float]]:
+        """Legacy market-curve support using residual value percentages."""
+
+        salvage_value = min(salvage_value, initial_value)
+        results: List[Dict[str, float]] = []
+        previous_value = initial_value
+        cumulative = 0.0
+
+        for year, residual in enumerate(market_value_curve, start=1):
+            residual_value = max(residual * initial_value, salvage_value)
             depreciation = previous_value - residual_value
-            rows.append({"year": year, "depreciation": depreciation, "book_value": residual_value})
+            cumulative += depreciation
+            results.append(
+                {
+                    "year": year,
+                    "depreciation_amount": depreciation,
+                    "cumulative_depreciation": cumulative,
+                    "book_value": residual_value,
+                    "residual_value_percent": max(0.0, (residual_value / initial_value) * 100),
+                }
+            )
             previous_value = residual_value
-        # Extend schedule with flat salvage if analysis horizon exceeds provided curve.
-        if len(rows) < self.params.useful_life_years:
-            for year in range(len(rows) + 1, self.params.useful_life_years + 1):
-                rows.append(
+
+        # Extend out to requested horizon if the curve is shorter.
+        if len(results) < years:
+            book_value = results[-1]["book_value"] if results else initial_value
+            for year in range(len(results) + 1, years + 1):
+                results.append(
                     {
                         "year": year,
-                        "depreciation": 0.0,
-                        "book_value": rows[-1]["book_value"] if rows else self.purchase_price,
+                        "depreciation_amount": 0.0,
+                        "cumulative_depreciation": cumulative,
+                        "book_value": book_value,
+                        "residual_value_percent": max(0.0, (book_value / initial_value) * 100),
                     }
                 )
-        return rows
+
+        return results
 
 
 class TotalCostOfOwnershipCalculator:
