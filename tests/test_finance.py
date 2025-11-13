@@ -5,8 +5,10 @@ from ev_model.finance import (
     DepreciationMethod,
     DepreciationParameters,
     EVAcquisitionCalculator,
+    EVComparisonAnalyzer,
     EVEnergyCostsCalculator,
     EVOperatingCostsCalculator,
+    EVTotalCostOfOwnershipAnalyzer,
     EVVehicleSpecs,
     EnergyParameters,
     OperatingCostCalculator,
@@ -215,4 +217,48 @@ def test_vehicle_comparison(sample_vehicle: EVVehicleSpecs, sample_energy: Energ
     assert len(table) == 1
     assert table[0]["vehicle"] == sample_vehicle.name
     assert table[0]["analysis_years"] == 6
+
+
+def test_ev_total_cost_of_ownership_analyzer(
+    sample_vehicle: EVVehicleSpecs, sample_energy: EnergyParameters
+) -> None:
+    analyzer = EVTotalCostOfOwnershipAnalyzer(
+        sample_vehicle,
+        energy_params=sample_energy,
+    )
+    results = analyzer.calculate_comprehensive_tco(years=5)
+
+    assert "summary" in results
+    assert len(results["annual_details"]) == 5
+    summary = results["summary"]
+    assert summary["vehicle_name"] == sample_vehicle.name
+    assert summary["total_ownership_cost"] > 0
+    assert summary["cost_per_mile"] > 0
+
+
+def test_ev_comparison_analyzer(sample_vehicle: EVVehicleSpecs) -> None:
+    analyzer = EVComparisonAnalyzer()
+    traditional = {
+        "name": "ICE Sedan",
+        "purchase_price": 38000.0,
+        "annual_fuel_cost": 2600.0,
+        "annual_maintenance_cost": 1200.0,
+        "annual_insurance_cost": 1500.0,
+        "annual_registration_fee": 220.0,
+        "residual_value_percent": 0.30,
+    }
+
+    comparison = analyzer.compare_vehicles(
+        sample_vehicle,
+        traditional=traditional,
+        years=5,
+        annual_miles=12_000,
+    )
+
+    assert "summary" in comparison["ev"]
+    assert comparison["ev"]["summary"]["vehicle_name"] == sample_vehicle.name
+    assert comparison["traditional"]["summary"]["vehicle_name"] == traditional["name"]
+    assert comparison["traditional"]["summary"]["cost_per_mile"] > 0
+    assert "ev_vs_traditional_savings" in comparison["differentials"]
+    assert comparison["differentials"]["ev_vs_traditional_savings"] != 0
 

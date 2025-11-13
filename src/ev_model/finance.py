@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:  # pragma: no cover - exercised indirectly through unit tests
     import pandas as pd
@@ -856,3 +856,304 @@ class VehicleComparison:
             rows.append(row)
         return rows
 
+
+class EVTotalCostOfOwnershipAnalyzer:
+    """Perform a comprehensive TCO analysis for a single EV configuration."""
+
+    def __init__(
+        self,
+        vehicle: EVVehicleSpecs,
+        financing: Optional[VehicleFinancing] = None,
+        energy_params: Optional[EnergyParameters] = None,
+        incentives: Optional[TaxIncentives] = None,
+        depreciation_params: Optional[DepreciationParameters] = None,
+    ) -> None:
+        self.vehicle = vehicle
+        self.energy_params = energy_params or EnergyParameters(
+            electricity_rate_per_kwh=0.14,
+            home_charging_efficiency=0.90,
+            dc_fast_charging_efficiency=0.80,
+            annual_miles_driven=12_000,
+            percent_home_charged=0.7,
+            percent_dc_charged=0.1,
+            percent_level2_charged=0.2,
+        )
+        self.incentives = incentives
+
+        self.acquisition_calc = EVAcquisitionCalculator(vehicle, financing)
+        self.operating_calc = EVOperatingCostsCalculator(vehicle)
+        self.energy_calc = EVEnergyCostsCalculator(vehicle, self.energy_params)
+        self.depreciation_params = depreciation_params or DepreciationParameters(
+            method=DepreciationMethod.MARKET_BASED,
+            useful_life_years=max(self.vehicle.warranty_years, 10),
+            annual_miles=self.energy_params.annual_miles_driven,
+        )
+        self.depreciation_calc = DepreciationCalculator(
+            vehicle.purchase_price, self.depreciation_params
+        )
+
+        # Normalise financing reference so downstream consumers always have details
+        self.financing = self.acquisition_calc.financing
+
+    def _to_records(self, frame: pd.DataFrame) -> List[Dict[str, float]]:
+        """Convert a DataFrame-like object into a list of dictionaries."""
+
+        if hasattr(frame, "to_dict"):
+            return frame.to_dict("records")  # type: ignore[arg-type]
+        raise TypeError("Unsupported frame type for record conversion")
+
+    def calculate_comprehensive_tco(self, years: int = 10) -> Dict[str, Any]:
+        """Calculate detailed total cost of ownership information."""
+
+        if years <= 0:
+            raise ValueError("Years must be a positive integer for TCO analysis")
+
+        acquisition = self.acquisition_calc.get_total_acquisition_cost(self.incentives)
+        operating_df = self.operating_calc.calculate_annual_operating_costs(
+            annual_miles=self.energy_params.annual_miles_driven, years=years
+        )
+        energy_df = self.energy_calc.calculate_annual_energy_cost(years=years)
+        depreciation_df = self.depreciation_calc.calculate_depreciation(
+            initial_value=acquisition["net_purchase_cost"],
+            years=years,
+            method=self.depreciation_params.method,
+            annual_miles=self.depreciation_params.annual_miles,
+            salvage_value=self.depreciation_params.salvage_value,
+            declining_balance_rate=self.depreciation_params.declining_balance_rate,
+            market_value_curve=self.depreciation_params.market_value_curve,
+        )
+
+        operating_records = self._to_records(operating_df)
+        energy_records = self._to_records(energy_df)
+        depreciation_records = self._to_records(depreciation_df)
+
+        financing_payment = self.financing.monthly_payment or 0.0
+        financing_years = self.financing.loan_term_years
+        annual_miles = self.energy_params.annual_miles_driven
+
+        tco_rows: List[Dict[str, float]] = []
+        cumulative_cost = 0.0
+        cumulative_financing = 0.0
+
+        for idx in range(years):
+            year = idx + 1
+            financing_cost = financing_payment * 12 if year <= financing_years else 0.0
+            cumulative_financing += financing_cost
+
+            operating_cost = (
+                operating_records[idx]["total_operating_cost"]
+                if idx < len(operating_records)
+                else 0.0
+            )
+            energy_cost = (
+                energy_records[idx]["total_energy_cost"]
+                if idx < len(energy_records)
+                else 0.0
+            )
+            total_annual_cost = financing_cost + operating_cost + energy_cost
+            cumulative_cost += total_annual_cost
+
+            residual_value = (
+                depreciation_records[idx]["book_value"]
+                if idx < len(depreciation_records)
+                else 0.0
+            )
+            cumulative_miles = annual_miles * year
+            cost_per_mile = cumulative_cost / cumulative_miles if cumulative_miles else 0.0
+
+            tco_rows.append(
+                {
+                    "year": year,
+                    "financing_cost": financing_cost,
+                    "operating_cost": operating_cost,
+                    "energy_cost": energy_cost,
+                    "total_annual_cost": total_annual_cost,
+                    "cumulative_cost": cumulative_cost,
+                    "cumulative_financing": cumulative_financing,
+                    "residual_value": residual_value,
+                    "net_cost_after_residual": cumulative_cost - residual_value,
+                    "cumulative_miles": cumulative_miles,
+                    "cost_per_mile": cost_per_mile,
+                }
+            )
+
+        total_cost = sum(row["total_annual_cost"] for row in tco_rows)
+        total_miles = annual_miles * years
+        final_residual = tco_rows[-1]["residual_value"] if tco_rows else 0.0
+        net_cost = total_cost - final_residual
+
+        summary = {
+            "vehicle_name": self.vehicle.name,
+            "initial_cost": acquisition["purchase_price"],
+            "net_initial_cost": acquisition["net_purchase_cost"],
+            "total_incentives": acquisition["total_incentives"],
+            "total_ownership_cost": total_cost,
+            "total_miles_driven": total_miles,
+            "final_residual_value": final_residual,
+            "net_ownership_cost": net_cost,
+            "cost_per_mile": net_cost / total_miles if total_miles else 0.0,
+            "financing_years": financing_years,
+            "financing_interest_rate": self.financing.annual_interest_rate,
+        }
+
+        return {
+            "acquisition": acquisition,
+            "annual_details": pd.DataFrame(tco_rows).to_dict("records"),
+            "operating_details": operating_records,
+            "energy_details": energy_records,
+            "depreciation_details": depreciation_records,
+            "summary": summary,
+        }
+
+
+class EVComparisonAnalyzer:
+    """Compare EV ownership costs against traditional and hybrid alternatives."""
+
+    def __init__(self) -> None:
+        pass
+
+    @staticmethod
+    def _inflated_total(base: float, rate: float, year: int) -> float:
+        return base * (1 + rate) ** max(year - 1, 0)
+
+    def _combustion_profile(
+        self,
+        name: str,
+        data: Dict[str, float],
+        years: int,
+        annual_miles: float,
+    ) -> Dict[str, Any]:
+        purchase_price = data.get("purchase_price", 0.0)
+        fuel_cost = data.get("annual_fuel_cost", 0.0)
+        maintenance_cost = data.get("annual_maintenance_cost", 0.0)
+        insurance_cost = data.get("annual_insurance_cost", 1200.0)
+        registration_fee = data.get("annual_registration_fee", 180.0)
+        residual_percent = data.get("residual_value_percent", 0.35)
+        fuel_inflation = data.get("fuel_inflation_rate", 0.04)
+        maintenance_inflation = data.get("maintenance_inflation_rate", 0.03)
+        insurance_inflation = data.get("insurance_inflation_rate", 0.02)
+        registration_inflation = data.get("registration_inflation_rate", 0.02)
+
+        annual_rows: List[Dict[str, float]] = []
+        cumulative_cost = 0.0
+
+        for year in range(1, years + 1):
+            fuel = self._inflated_total(fuel_cost, fuel_inflation, year)
+            maintenance = self._inflated_total(maintenance_cost, maintenance_inflation, year)
+            insurance = self._inflated_total(insurance_cost, insurance_inflation, year)
+            registration = self._inflated_total(registration_fee, registration_inflation, year)
+            total = fuel + maintenance + insurance + registration
+            cumulative_cost += total
+            cumulative_miles = annual_miles * year
+            annual_rows.append(
+                {
+                    "year": year,
+                    "fuel_cost": fuel,
+                    "maintenance_cost": maintenance,
+                    "insurance_cost": insurance,
+                    "registration_fee": registration,
+                    "total_annual_cost": total,
+                    "cumulative_operating_cost": cumulative_cost,
+                    "cumulative_miles": cumulative_miles,
+                    "cost_per_mile": cumulative_cost / cumulative_miles if cumulative_miles else 0.0,
+                }
+            )
+
+        residual_value = purchase_price * residual_percent
+        total_operating_cost = cumulative_cost
+        total_miles = annual_miles * years
+        net_cost = purchase_price + total_operating_cost - residual_value
+
+        summary = {
+            "vehicle_name": name,
+            "initial_cost": purchase_price,
+            "net_initial_cost": purchase_price,
+            "total_incentives": 0.0,
+            "total_ownership_cost": purchase_price + total_operating_cost,
+            "total_miles_driven": total_miles,
+            "final_residual_value": residual_value,
+            "net_ownership_cost": net_cost,
+            "cost_per_mile": net_cost / total_miles if total_miles else 0.0,
+            "financing_years": 0,
+            "financing_interest_rate": 0.0,
+        }
+
+        return {
+            "annual_details": annual_rows,
+            "summary": summary,
+        }
+
+    def compare_vehicles(
+        self,
+        ev: EVVehicleSpecs,
+        traditional: Optional[Dict[str, float]] = None,
+        hybrid: Optional[Dict[str, float]] = None,
+        years: int = 10,
+        annual_miles: float = 12_000,
+        energy_params: Optional[EnergyParameters] = None,
+        incentives: Optional[TaxIncentives] = None,
+    ) -> Dict[str, Any]:
+        """Return a side-by-side comparison for EV, traditional, and hybrid vehicles."""
+
+        energy = energy_params or EnergyParameters(
+            electricity_rate_per_kwh=0.14,
+            home_charging_efficiency=0.90,
+            dc_fast_charging_efficiency=0.80,
+            annual_miles_driven=annual_miles,
+            percent_home_charged=0.7,
+            percent_dc_charged=0.1,
+            percent_level2_charged=0.2,
+        )
+
+        analyzer = EVTotalCostOfOwnershipAnalyzer(
+            ev,
+            financing=None,
+            energy_params=energy,
+            incentives=incentives,
+            depreciation_params=DepreciationParameters(
+                method=DepreciationMethod.MARKET_BASED,
+                useful_life_years=years,
+                annual_miles=annual_miles,
+            ),
+        )
+        ev_results = analyzer.calculate_comprehensive_tco(years=years)
+
+        traditional_results = (
+            self._combustion_profile(
+                traditional.get("name", "Traditional Vehicle"),
+                traditional,
+                years,
+                annual_miles,
+            )
+            if traditional
+            else None
+        )
+
+        hybrid_results = (
+            self._combustion_profile(
+                hybrid.get("name", "Hybrid Vehicle"),
+                hybrid,
+                years,
+                annual_miles,
+            )
+            if hybrid
+            else None
+        )
+
+        differentials: Dict[str, float] = {}
+        ev_net = ev_results["summary"]["net_ownership_cost"]
+        if traditional_results:
+            differentials["ev_vs_traditional_savings"] = traditional_results["summary"][
+                "net_ownership_cost"
+            ] - ev_net
+        if hybrid_results:
+            differentials["ev_vs_hybrid_savings"] = hybrid_results["summary"][
+                "net_ownership_cost"
+            ] - ev_net
+
+        return {
+            "ev": ev_results,
+            "traditional": traditional_results,
+            "hybrid": hybrid_results,
+            "differentials": differentials,
+        }
