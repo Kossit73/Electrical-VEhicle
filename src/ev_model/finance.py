@@ -1237,7 +1237,6 @@ class EVSensitivityAnalyzer:
                     "change_percent": (factor - 1) * 100,
                     "new_value": self._get_variable_value(variable, factor),
                     "cost_per_mile": new_cost_per_mile,
-                    "cost_impact": cost_impact,
                     "impact_percent": (cost_impact / base_cost_per_mile * 100)
                     if base_cost_per_mile
                     else 0.0,

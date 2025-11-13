@@ -77,7 +77,9 @@ else:
             return value
 
         @validator("percent_level2_charged", always=True)
-        def _validate_mix(cls, value: float, values: Dict[str, Any]) -> float:
+        def validate_percentages_sum(cls, value: float, values: Dict[str, Any]) -> float:
+            """Validate that charging percentages total 100%."""
+
             home = values.get("percent_home_charged")
             dc = values.get("percent_dc_charged")
             level2 = value
