@@ -22,6 +22,7 @@ from .finance import (
 )
 from .metrics import evaluate_regression, mean_absolute_error, mean_squared_error, r2_score
 from .model import EVRangeRegressor
+from . import legacy_financial_model
 
 try:  # pragma: no cover - importing API router is optional
     from .api import ev_router
@@ -57,4 +58,5 @@ __all__ = [
     "VehicleFinancing",
     "VehicleType",
     "ev_router",
+    "legacy_financial_model",
 ]
