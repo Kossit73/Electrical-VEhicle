@@ -1019,18 +1019,33 @@ class EVComparisonAnalyzer:
         hybrid: Optional[Dict[str, float]] = None,
         years: int = 10,
         annual_miles: float = 12_000,
+        energy_params: Optional[EnergyParameters] = None,
     ) -> Dict[str, Any]:
-        """Return a cost comparison across EV, traditional, and hybrid vehicles."""
+        """Return a cost comparison across EV, traditional, and hybrid vehicles.
 
-        ev_energy_params = EnergyParameters(
-            electricity_rate_per_kwh=0.14,
-            home_charging_efficiency=0.90,
-            dc_fast_charging_efficiency=0.80,
-            annual_miles_driven=annual_miles,
-            percent_home_charged=0.7,
-            percent_dc_charged=0.1,
-            percent_level2_charged=0.2,
-        )
+        Args:
+            ev: Electric vehicle specifications to analyse.
+            traditional: Optional ICE vehicle cost assumptions.
+            hybrid: Optional hybrid vehicle cost assumptions.
+            years: Analysis horizon in years.
+            annual_miles: Annual miles used for all scenarios.
+            energy_params: Optional charging mix and rate overrides for the EV.
+        """
+
+        if energy_params is not None:
+            ev_energy_params = replace(
+                energy_params, annual_miles_driven=annual_miles
+            )
+        else:
+            ev_energy_params = EnergyParameters(
+                electricity_rate_per_kwh=0.14,
+                home_charging_efficiency=0.90,
+                dc_fast_charging_efficiency=0.80,
+                annual_miles_driven=annual_miles,
+                percent_home_charged=0.7,
+                percent_dc_charged=0.1,
+                percent_level2_charged=0.2,
+            )
 
         ev_analyzer = EVTotalCostOfOwnershipAnalyzer(
             vehicle=ev,
