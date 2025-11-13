@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -1012,77 +1012,6 @@ class EVComparisonAnalyzer:
     def __init__(self) -> None:
         pass
 
-    @staticmethod
-    def _inflated_total(base: float, rate: float, year: int) -> float:
-        return base * (1 + rate) ** max(year - 1, 0)
-
-    def _combustion_profile(
-        self,
-        name: str,
-        data: Dict[str, float],
-        years: int,
-        annual_miles: float,
-    ) -> Dict[str, Any]:
-        purchase_price = data.get("purchase_price", 0.0)
-        fuel_cost = data.get("annual_fuel_cost", 0.0)
-        maintenance_cost = data.get("annual_maintenance_cost", 0.0)
-        insurance_cost = data.get("annual_insurance_cost", 1200.0)
-        registration_fee = data.get("annual_registration_fee", 180.0)
-        residual_percent = data.get("residual_value_percent", 0.35)
-        fuel_inflation = data.get("fuel_inflation_rate", 0.04)
-        maintenance_inflation = data.get("maintenance_inflation_rate", 0.03)
-        insurance_inflation = data.get("insurance_inflation_rate", 0.02)
-        registration_inflation = data.get("registration_inflation_rate", 0.02)
-
-        annual_rows: List[Dict[str, float]] = []
-        cumulative_cost = 0.0
-
-        for year in range(1, years + 1):
-            fuel = self._inflated_total(fuel_cost, fuel_inflation, year)
-            maintenance = self._inflated_total(maintenance_cost, maintenance_inflation, year)
-            insurance = self._inflated_total(insurance_cost, insurance_inflation, year)
-            registration = self._inflated_total(registration_fee, registration_inflation, year)
-            total = fuel + maintenance + insurance + registration
-            cumulative_cost += total
-            cumulative_miles = annual_miles * year
-            annual_rows.append(
-                {
-                    "year": year,
-                    "fuel_cost": fuel,
-                    "maintenance_cost": maintenance,
-                    "insurance_cost": insurance,
-                    "registration_fee": registration,
-                    "total_annual_cost": total,
-                    "cumulative_operating_cost": cumulative_cost,
-                    "cumulative_miles": cumulative_miles,
-                    "cost_per_mile": cumulative_cost / cumulative_miles if cumulative_miles else 0.0,
-                }
-            )
-
-        residual_value = purchase_price * residual_percent
-        total_operating_cost = cumulative_cost
-        total_miles = annual_miles * years
-        net_cost = purchase_price + total_operating_cost - residual_value
-
-        summary = {
-            "vehicle_name": name,
-            "initial_cost": purchase_price,
-            "net_initial_cost": purchase_price,
-            "total_incentives": 0.0,
-            "total_ownership_cost": purchase_price + total_operating_cost,
-            "total_miles_driven": total_miles,
-            "final_residual_value": residual_value,
-            "net_ownership_cost": net_cost,
-            "cost_per_mile": net_cost / total_miles if total_miles else 0.0,
-            "financing_years": 0,
-            "financing_interest_rate": 0.0,
-        }
-
-        return {
-            "annual_details": annual_rows,
-            "summary": summary,
-        }
-
     def compare_vehicles(
         self,
         ev: EVVehicleSpecs,
@@ -1090,12 +1019,10 @@ class EVComparisonAnalyzer:
         hybrid: Optional[Dict[str, float]] = None,
         years: int = 10,
         annual_miles: float = 12_000,
-        energy_params: Optional[EnergyParameters] = None,
-        incentives: Optional[TaxIncentives] = None,
     ) -> Dict[str, Any]:
-        """Return a side-by-side comparison for EV, traditional, and hybrid vehicles."""
+        """Return a cost comparison across EV, traditional, and hybrid vehicles."""
 
-        energy = energy_params or EnergyParameters(
+        ev_energy_params = EnergyParameters(
             electricity_rate_per_kwh=0.14,
             home_charging_efficiency=0.90,
             dc_fast_charging_efficiency=0.80,
@@ -1105,55 +1032,254 @@ class EVComparisonAnalyzer:
             percent_level2_charged=0.2,
         )
 
-        analyzer = EVTotalCostOfOwnershipAnalyzer(
-            ev,
-            financing=None,
-            energy_params=energy,
-            incentives=incentives,
-            depreciation_params=DepreciationParameters(
-                method=DepreciationMethod.MARKET_BASED,
-                useful_life_years=years,
-                annual_miles=annual_miles,
-            ),
+        ev_analyzer = EVTotalCostOfOwnershipAnalyzer(
+            vehicle=ev,
+            energy_params=ev_energy_params,
         )
-        ev_results = analyzer.calculate_comprehensive_tco(years=years)
+        ev_tco = ev_analyzer.calculate_comprehensive_tco(years=years)
 
-        traditional_results = (
-            self._combustion_profile(
-                traditional.get("name", "Traditional Vehicle"),
-                traditional,
-                years,
-                annual_miles,
+        comparison: Dict[str, Any] = {
+            "ev": ev_tco["summary"],
+            "vehicles_compared": {
+                "EV": ev.name,
+                "Traditional": traditional.get("name", "N/A") if traditional else None,
+                "Hybrid": hybrid.get("name", "N/A") if hybrid else None,
+            },
+            "years_analyzed": years,
+            "annual_miles": annual_miles,
+        }
+
+        if traditional:
+            traditional_tco = self._calculate_traditional_vehicle_tco(
+                traditional, years, annual_miles
             )
-            if traditional
-            else None
-        )
-
-        hybrid_results = (
-            self._combustion_profile(
-                hybrid.get("name", "Hybrid Vehicle"),
-                hybrid,
+            comparison["traditional"] = traditional_tco
+            comparison["ev_vs_traditional"] = self._calculate_savings(
+                ev_tco["summary"]["net_ownership_cost"],
+                traditional_tco["net_cost"],
+                ev_tco["summary"]["initial_cost"],
+                traditional.get("initial_cost", traditional.get("purchase_price", 0.0)),
                 years,
-                annual_miles,
             )
-            if hybrid
-            else None
+
+        if hybrid:
+            hybrid_tco = self._calculate_hybrid_vehicle_tco(hybrid, years, annual_miles)
+            comparison["hybrid"] = hybrid_tco
+            comparison["ev_vs_hybrid"] = self._calculate_savings(
+                ev_tco["summary"]["net_ownership_cost"],
+                hybrid_tco["net_cost"],
+                ev_tco["summary"]["initial_cost"],
+                hybrid.get("initial_cost", hybrid.get("purchase_price", 0.0)),
+                years,
+            )
+
+        return comparison
+
+    def _calculate_traditional_vehicle_tco(
+        self,
+        vehicle: Dict[str, float],
+        years: int,
+        annual_miles: float,
+    ) -> Dict[str, float]:
+        """Calculate total cost of ownership for a traditional vehicle."""
+
+        annual_fuel_cost = (annual_miles / vehicle.get("mpg", 25.0)) * vehicle.get(
+            "fuel_price", 3.5
+        )
+        maintenance_cost = annual_miles * vehicle.get("maintenance_per_mile", 0.08)
+        annual_insurance = vehicle.get("insurance_per_year", 1200.0)
+        annual_registration = vehicle.get("registration_per_year", 200.0)
+
+        annual_cost = (
+            annual_fuel_cost
+            + maintenance_cost
+            + annual_insurance
+            + annual_registration
         )
 
-        differentials: Dict[str, float] = {}
-        ev_net = ev_results["summary"]["net_ownership_cost"]
-        if traditional_results:
-            differentials["ev_vs_traditional_savings"] = traditional_results["summary"][
-                "net_ownership_cost"
-            ] - ev_net
-        if hybrid_results:
-            differentials["ev_vs_hybrid_savings"] = hybrid_results["summary"][
-                "net_ownership_cost"
-            ] - ev_net
+        financing_cost = vehicle.get("monthly_payment", 400.0) * 12 * 6
+        total_cost = (annual_cost * years) + financing_cost
+        initial_cost = vehicle.get("initial_cost", vehicle.get("purchase_price", 30_000.0))
+        residual_value = initial_cost * vehicle.get("residual_percent", 0.4)
 
         return {
-            "ev": ev_results,
-            "traditional": traditional_results,
-            "hybrid": hybrid_results,
-            "differentials": differentials,
+            "annual_fuel_cost": annual_fuel_cost,
+            "annual_maintenance": maintenance_cost,
+            "annual_insurance": annual_insurance,
+            "annual_registration": annual_registration,
+            "total_annual_cost": annual_cost,
+            "total_cost": total_cost,
+            "residual_value": residual_value,
+            "net_cost": total_cost - residual_value,
         }
+
+    def _calculate_hybrid_vehicle_tco(
+        self,
+        vehicle: Dict[str, float],
+        years: int,
+        annual_miles: float,
+    ) -> Dict[str, float]:
+        """Calculate total cost of ownership for a hybrid vehicle."""
+
+        annual_fuel_cost = (annual_miles / vehicle.get("mpg_combined", 50.0)) * vehicle.get(
+            "fuel_price", 3.5
+        )
+        maintenance_cost = annual_miles * vehicle.get("maintenance_per_mile", 0.05)
+        annual_insurance = vehicle.get("insurance_per_year", 1300.0)
+        annual_registration = vehicle.get("registration_per_year", 200.0)
+
+        annual_cost = (
+            annual_fuel_cost
+            + maintenance_cost
+            + annual_insurance
+            + annual_registration
+        )
+
+        financing_cost = vehicle.get("monthly_payment", 500.0) * 12 * 6
+        total_cost = (annual_cost * years) + financing_cost
+        initial_cost = vehicle.get("initial_cost", vehicle.get("purchase_price", 35_000.0))
+        residual_value = initial_cost * vehicle.get("residual_percent", 0.45)
+
+        return {
+            "annual_fuel_cost": annual_fuel_cost,
+            "annual_maintenance": maintenance_cost,
+            "annual_insurance": annual_insurance,
+            "annual_registration": annual_registration,
+            "total_annual_cost": annual_cost,
+            "total_cost": total_cost,
+            "residual_value": residual_value,
+            "net_cost": total_cost - residual_value,
+        }
+
+    def _calculate_savings(
+        self,
+        ev_cost: float,
+        alternative_cost: float,
+        ev_purchase_price: float,
+        alternative_price: float,
+        years: int,
+    ) -> Dict[str, Any]:
+        """Calculate cost savings and payback period when switching to an EV."""
+
+        total_savings = alternative_cost - ev_cost
+        annual_savings = total_savings / years if years else 0.0
+        price_premium = ev_purchase_price - alternative_price
+
+        if annual_savings > 0:
+            payback_years = min(years, price_premium / annual_savings) if price_premium > 0 else 0
+        else:
+            payback_years = None
+
+        return {
+            "total_savings": total_savings,
+            "annual_savings": annual_savings,
+            "price_premium": price_premium,
+            "payback_period_years": payback_years,
+            "savings_percent": (total_savings / alternative_cost * 100) if alternative_cost else 0.0,
+        }
+
+
+class EVSensitivityAnalyzer:
+    """Perform sensitivity analysis on the total cost of ownership model."""
+
+    def __init__(self, base_tco_analysis: EVTotalCostOfOwnershipAnalyzer) -> None:
+        self.base_analyzer = base_tco_analysis
+
+    def sensitivity_analysis(
+        self,
+        variable: str,
+        variation_percent: float = 10,
+        years: int = 10,
+    ) -> Dict[str, Any]:
+        """Evaluate the effect of varying a key input on cost-per-mile outcomes."""
+
+        if variation_percent <= 0:
+            raise ValueError("variation_percent must be positive for sensitivity analysis")
+
+        base_tco = self.base_analyzer.calculate_comprehensive_tco(years=years)
+        base_cost_per_mile = base_tco["summary"]["cost_per_mile"]
+
+        spread = variation_percent / 100.0
+        half_spread = spread / 2
+        factors = [1 - spread, 1 - half_spread, 1.0, 1 + half_spread, 1 + spread]
+
+        results: Dict[str, Any] = {
+            "variable": variable,
+            "base_value": self._get_variable_value(variable),
+            "base_cost_per_mile": base_cost_per_mile,
+            "scenarios": [],
+        }
+
+        for factor in factors:
+            modified_analyzer = self._create_modified_analyzer(variable, factor)
+            modified_tco = modified_analyzer.calculate_comprehensive_tco(years=years)
+            new_cost_per_mile = modified_tco["summary"]["cost_per_mile"]
+            cost_impact = new_cost_per_mile - base_cost_per_mile
+
+            results["scenarios"].append(
+                {
+                    "factor": factor,
+                    "change_percent": (factor - 1) * 100,
+                    "new_value": self._get_variable_value(variable, factor),
+                    "cost_per_mile": new_cost_per_mile,
+                    "cost_impact": cost_impact,
+                    "impact_percent": (cost_impact / base_cost_per_mile * 100)
+                    if base_cost_per_mile
+                    else 0.0,
+                }
+            )
+
+        return results
+
+    def _get_variable_value(self, variable: str, factor: float = 1.0) -> float:
+        """Return the current or scaled value for a variable under test."""
+
+        if variable == "electricity_rate":
+            return self.base_analyzer.energy_params.electricity_rate_per_kwh * factor
+        if variable == "annual_miles":
+            return self.base_analyzer.energy_params.annual_miles_driven * factor
+        if variable == "purchase_price":
+            return self.base_analyzer.vehicle.purchase_price * factor
+        if variable == "battery_cost":
+            return self.base_analyzer.vehicle.battery_replacement_cost * factor
+        return 0.0
+
+    def _create_modified_analyzer(
+        self,
+        variable: str,
+        factor: float,
+    ) -> EVTotalCostOfOwnershipAnalyzer:
+        """Create a cloned analyzer with a single parameter adjusted."""
+
+        energy_params = EnergyParameters(
+            electricity_rate_per_kwh=self.base_analyzer.energy_params.electricity_rate_per_kwh,
+            home_charging_efficiency=self.base_analyzer.energy_params.home_charging_efficiency,
+            dc_fast_charging_efficiency=self.base_analyzer.energy_params.dc_fast_charging_efficiency,
+            annual_miles_driven=self.base_analyzer.energy_params.annual_miles_driven,
+            percent_home_charged=self.base_analyzer.energy_params.percent_home_charged,
+            percent_dc_charged=self.base_analyzer.energy_params.percent_dc_charged,
+            percent_level2_charged=self.base_analyzer.energy_params.percent_level2_charged,
+        )
+
+        vehicle = replace(self.base_analyzer.vehicle)
+        financing = replace(self.base_analyzer.financing) if self.base_analyzer.financing else None
+
+        if variable == "electricity_rate":
+            energy_params.electricity_rate_per_kwh *= factor
+        elif variable == "annual_miles":
+            energy_params.annual_miles_driven *= factor
+        elif variable == "purchase_price":
+            vehicle = replace(vehicle, purchase_price=vehicle.purchase_price * factor)
+        elif variable == "battery_cost":
+            vehicle = replace(
+                vehicle,
+                battery_replacement_cost=vehicle.battery_replacement_cost * factor,
+            )
+
+        return EVTotalCostOfOwnershipAnalyzer(
+            vehicle=vehicle,
+            financing=financing,
+            energy_params=energy_params,
+            incentives=self.base_analyzer.incentives,
+            depreciation_params=self.base_analyzer.depreciation_params,
+        )

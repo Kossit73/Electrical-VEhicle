@@ -8,6 +8,7 @@ from ev_model.finance import (
     EVComparisonAnalyzer,
     EVEnergyCostsCalculator,
     EVOperatingCostsCalculator,
+    EVSensitivityAnalyzer,
     EVTotalCostOfOwnershipAnalyzer,
     EVVehicleSpecs,
     EnergyParameters,
@@ -240,12 +241,13 @@ def test_ev_comparison_analyzer(sample_vehicle: EVVehicleSpecs) -> None:
     analyzer = EVComparisonAnalyzer()
     traditional = {
         "name": "ICE Sedan",
-        "purchase_price": 38000.0,
-        "annual_fuel_cost": 2600.0,
-        "annual_maintenance_cost": 1200.0,
-        "annual_insurance_cost": 1500.0,
-        "annual_registration_fee": 220.0,
-        "residual_value_percent": 0.30,
+        "initial_cost": 38000.0,
+        "mpg": 28.0,
+        "fuel_price": 3.8,
+        "maintenance_per_mile": 0.09,
+        "insurance_per_year": 1400.0,
+        "registration_per_year": 220.0,
+        "residual_percent": 0.32,
     }
 
     comparison = analyzer.compare_vehicles(
@@ -255,10 +257,34 @@ def test_ev_comparison_analyzer(sample_vehicle: EVVehicleSpecs) -> None:
         annual_miles=12_000,
     )
 
-    assert "summary" in comparison["ev"]
-    assert comparison["ev"]["summary"]["vehicle_name"] == sample_vehicle.name
-    assert comparison["traditional"]["summary"]["vehicle_name"] == traditional["name"]
-    assert comparison["traditional"]["summary"]["cost_per_mile"] > 0
-    assert "ev_vs_traditional_savings" in comparison["differentials"]
-    assert comparison["differentials"]["ev_vs_traditional_savings"] != 0
+    assert comparison["ev"]["vehicle_name"] == sample_vehicle.name
+    assert comparison["traditional"]["total_cost"] > 0
+    assert comparison["ev_vs_traditional"]["total_savings"] != 0
+    assert comparison["vehicles_compared"]["EV"] == sample_vehicle.name
+    assert comparison["vehicles_compared"]["Traditional"] == traditional["name"]
+
+
+def test_ev_sensitivity_analyzer(sample_vehicle: EVVehicleSpecs, sample_energy: EnergyParameters) -> None:
+    base_analyzer = EVTotalCostOfOwnershipAnalyzer(
+        vehicle=sample_vehicle,
+        energy_params=sample_energy,
+    )
+    sensitivity = EVSensitivityAnalyzer(base_analyzer)
+
+    results = sensitivity.sensitivity_analysis("electricity_rate", variation_percent=20, years=4)
+
+    assert results["variable"] == "electricity_rate"
+    assert len(results["scenarios"]) == 5
+    base_value = sample_energy.electricity_rate_per_kwh
+    assert results["base_value"] == pytest.approx(base_value)
+
+    for scenario in results["scenarios"]:
+        assert "cost_per_mile" in scenario
+        assert "impact_percent" in scenario
+
+    # Ensure the base analyzer remains unchanged after sensitivity runs
+    assert sample_vehicle.purchase_price == pytest.approx(base_analyzer.vehicle.purchase_price)
+    assert sample_energy.electricity_rate_per_kwh == pytest.approx(
+        base_analyzer.energy_params.electricity_rate_per_kwh
+    )
 

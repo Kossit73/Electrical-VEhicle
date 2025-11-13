@@ -9,6 +9,7 @@ from .finance import (
     EVComparisonAnalyzer,
     EVEnergyCostsCalculator,
     EVOperatingCostsCalculator,
+    EVSensitivityAnalyzer,
     EVTotalCostOfOwnershipAnalyzer,
     EVVehicleSpecs,
     EnergyParameters,
@@ -21,6 +22,11 @@ from .finance import (
 )
 from .metrics import evaluate_regression, mean_absolute_error, mean_squared_error, r2_score
 from .model import EVRangeRegressor
+
+try:  # pragma: no cover - importing API router is optional
+    from .api import ev_router
+except ModuleNotFoundError:  # pragma: no cover - FastAPI not installed
+    ev_router = None  # type: ignore
 
 __all__ = [
     "FEATURES",
@@ -40,6 +46,7 @@ __all__ = [
     "EVComparisonAnalyzer",
     "EVEnergyCostsCalculator",
     "EVOperatingCostsCalculator",
+    "EVSensitivityAnalyzer",
     "EVTotalCostOfOwnershipAnalyzer",
     "EVVehicleSpecs",
     "EnergyParameters",
@@ -49,4 +56,5 @@ __all__ = [
     "VehicleComparison",
     "VehicleFinancing",
     "VehicleType",
+    "ev_router",
 ]
