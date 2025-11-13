@@ -5,6 +5,7 @@ from ev_model.finance import (
     DepreciationMethod,
     DepreciationParameters,
     EVAcquisitionCalculator,
+    EVOperatingCostsCalculator,
     EVVehicleSpecs,
     EnergyParameters,
     OperatingCostCalculator,
@@ -69,6 +70,39 @@ def test_operating_cost_calculator(sample_vehicle: EVVehicleSpecs, sample_energy
     assert energy_cost == pytest.approx(649.38, rel=1e-3)
     assert maintenance_cost == pytest.approx(675.0)
 
+    schedule = operating.detailed_operating_costs(years=5)
+    assert list(schedule.columns) == [
+        "year",
+        "annual_miles",
+        "cumulative_miles",
+        "maintenance_cost",
+        "battery_cost",
+        "registration_fee",
+        "insurance_cost",
+        "tire_replacement",
+        "total_operating_cost",
+    ]
+    assert schedule.iloc[0]["total_operating_cost"] == pytest.approx(2155.0)
+    assert schedule.iloc[2]["tire_replacement"] == pytest.approx(936.36, rel=1e-3)
+
+    lifetime = operating.lifetime_operating_cost(5)
+    assert lifetime["maintenance_cost"] == pytest.approx(schedule["maintenance_cost"].sum())
+    assert lifetime["battery_cost"] == pytest.approx(schedule["battery_cost"].sum())
+    assert lifetime["tire_cost"] == pytest.approx(schedule["tire_replacement"].sum())
+    assert lifetime["total_operating_cost"] == pytest.approx(
+        lifetime["energy_cost"] + schedule["total_operating_cost"].sum()
+    )
+
+
+def test_ev_operating_costs_calculator_handles_warranty(sample_vehicle: EVVehicleSpecs) -> None:
+    calc = EVOperatingCostsCalculator(sample_vehicle)
+    df = calc.calculate_annual_operating_costs(annual_miles=15000, years=9)
+
+    assert df.loc[df["year"] == 7, "battery_cost"].iloc[0] == pytest.approx(300.0)
+    assert df.loc[df["year"] == 8, "battery_cost"].iloc[0] == pytest.approx(900.0)
+    assert df.loc[df["year"] == 9, "battery_cost"].iloc[0] == pytest.approx(1650.0)
+    assert df.loc[df["year"] == 9, "tire_replacement"].iloc[0] > 0
+
 
 def test_depreciation_schedules() -> None:
     params = DepreciationParameters(
@@ -119,6 +153,8 @@ def test_total_cost_of_ownership_summary(sample_vehicle: EVVehicleSpecs, sample_
     assert summary["analysis_years"] == 8
     assert summary["residual_value"] == pytest.approx(12000.0)
     assert summary["total_cost_of_ownership"] > 0
+    assert "total_battery_cost" in summary
+    assert "total_tire_cost" in summary
 
     cash_flows = calculator.annual_cash_flows()
     assert len(cash_flows) == 8

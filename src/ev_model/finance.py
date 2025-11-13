@@ -7,6 +7,82 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
+try:  # pragma: no cover - exercised indirectly through unit tests
+    import pandas as pd
+except ModuleNotFoundError:  # pragma: no cover - minimal fallback when pandas unavailable
+    class _MiniSeries(list):
+        def sum(self) -> float:
+            return float(sum(self))
+
+        def __eq__(self, other: object) -> List[bool]:  # type: ignore[override]
+            return [value == other for value in self]
+
+        @property
+        def iloc(self) -> "_MiniSeriesIndexer":
+            return _MiniSeriesIndexer(self)
+
+    class _MiniSeriesIndexer:
+        def __init__(self, data: _MiniSeries):
+            self._data = data
+
+        def __getitem__(self, index):
+            return self._data[index]
+
+    class _MiniRow(dict):
+        pass
+
+    class _MiniILocRows:
+        def __init__(self, rows: List[_MiniRow]):
+            self._rows = rows
+
+        def __getitem__(self, index):
+            if isinstance(index, slice):
+                return self._rows[index]
+            return self._rows[index]
+
+    class _MiniLocIndexer:
+        def __init__(self, df: "_MiniDataFrame"):
+            self._df = df
+
+        def __getitem__(self, key):
+            mask, column = key
+            if isinstance(mask, _MiniSeries):
+                mask_iter = list(mask)
+            else:
+                mask_iter = list(mask)
+            filtered_rows = [row for row, keep in zip(self._df._rows, mask_iter) if keep]
+            return _MiniSeries([row[column] for row in filtered_rows])
+
+    class _MiniDataFrame:
+        def __init__(self, rows: List[Dict[str, float]]):
+            self._rows: List[_MiniRow] = [
+                _MiniRow(row) for row in rows
+            ]
+            self._columns = list(rows[0].keys()) if rows else []
+
+        @property
+        def columns(self) -> List[str]:
+            return self._columns
+
+        def __getitem__(self, column: str) -> _MiniSeries:
+            return _MiniSeries([row[column] for row in self._rows])
+
+        @property
+        def iloc(self) -> _MiniILocRows:
+            return _MiniILocRows(self._rows)
+
+        @property
+        def loc(self) -> _MiniLocIndexer:
+            return _MiniLocIndexer(self)
+
+        def __len__(self) -> int:
+            return len(self._rows)
+
+    class _MiniPandasModule:
+        DataFrame = _MiniDataFrame
+
+    pd = _MiniPandasModule()
+
 
 logger = logging.getLogger(__name__)
 
@@ -185,13 +261,126 @@ class EVAcquisitionCalculator:
         return rows
 
 
+class EVOperatingCostsCalculator:
+    """Calculate operating costs for electric vehicles with detailed projections."""
+
+    _TIRE_REPLACEMENT_INTERVAL_MILES = 42_000
+    _TIRE_REPLACEMENT_COST = 900.0
+
+    def __init__(self, vehicle: EVVehicleSpecs):
+        self.vehicle = vehicle
+
+    def calculate_annual_operating_costs(
+        self,
+        annual_miles: float,
+        annual_registration: Optional[float] = None,
+        annual_insurance: Optional[float] = None,
+        maintenance_inflation_rate: float = 0.02,
+        years: int = 10,
+    ) -> pd.DataFrame:
+        """Calculate year-by-year operating costs with inflation and wear factors."""
+
+        if years <= 0:
+            raise ValueError("Years must be positive for operating cost projections")
+
+        results: List[Dict[str, float]] = []
+        registration_fee = (
+            annual_registration if annual_registration is not None else self.vehicle.annual_registration_fee
+        )
+        insurance_cost = (
+            annual_insurance if annual_insurance is not None else self.vehicle.annual_insurance_cost
+        )
+
+        for year in range(1, years + 1):
+            cumulative_miles = annual_miles * year
+
+            maintenance_cost = (
+                self.vehicle.maintenance_cost_per_mile
+                * annual_miles
+                * (1 + maintenance_inflation_rate) ** (year - 1)
+            )
+
+            battery_degradation_cost = self._calculate_battery_costs(year, annual_miles)
+            registration = registration_fee * (1.02 ** (year - 1))
+            insurance = insurance_cost * (1.015 ** (year - 1))
+            tire_cost = self._calculate_tire_replacement_cost(year, annual_miles)
+
+            total_operating = (
+                maintenance_cost
+                + battery_degradation_cost
+                + registration
+                + insurance
+                + tire_cost
+            )
+
+            results.append(
+                {
+                    "year": year,
+                    "annual_miles": annual_miles,
+                    "cumulative_miles": cumulative_miles,
+                    "maintenance_cost": maintenance_cost,
+                    "battery_cost": battery_degradation_cost,
+                    "registration_fee": registration,
+                    "insurance_cost": insurance,
+                    "tire_replacement": tire_cost,
+                    "total_operating_cost": total_operating,
+                }
+            )
+
+        return pd.DataFrame(results)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    def _battery_reserve_fraction(self, year: int, annual_miles: float) -> float:
+        cumulative_miles = annual_miles * year
+        warranty_miles = max(self.vehicle.warranty_miles, 1.0)
+        warranty_years = max(self.vehicle.warranty_years, 1)
+
+        mileage_fraction = max(0.0, (cumulative_miles - self.vehicle.warranty_miles) / warranty_miles)
+        time_fraction = max(0.0, year - self.vehicle.warranty_years) / warranty_years
+
+        return min(1.0, 0.5 * min(mileage_fraction, 1.0) + 0.5 * min(time_fraction, 1.0))
+
+    def _calculate_battery_costs(self, year: int, annual_miles: float) -> float:
+        if self.vehicle.battery_replacement_cost <= 0:
+            return 0.0
+
+        current_fraction = self._battery_reserve_fraction(year, annual_miles)
+        previous_fraction = (
+            self._battery_reserve_fraction(year - 1, annual_miles) if year > 1 else 0.0
+        )
+
+        incremental_fraction = max(current_fraction - previous_fraction, 0.0)
+        return incremental_fraction * self.vehicle.battery_replacement_cost
+
+    def _calculate_tire_replacement_cost(self, year: int, annual_miles: float) -> float:
+        cumulative_miles = annual_miles * year
+        previous_miles = annual_miles * (year - 1)
+
+        replacements_to_date = int(cumulative_miles // self._TIRE_REPLACEMENT_INTERVAL_MILES)
+        replacements_previous = int(previous_miles // self._TIRE_REPLACEMENT_INTERVAL_MILES)
+
+        replacements_this_year = max(replacements_to_date - replacements_previous, 0)
+        if replacements_this_year == 0:
+            return 0.0
+
+        inflation_factor = 1.02 ** (year - 1)
+        return replacements_this_year * self._TIRE_REPLACEMENT_COST * inflation_factor
+
+
 class OperatingCostCalculator:
     """Estimate yearly energy and maintenance expenditure."""
 
-    def __init__(self, vehicle: EVVehicleSpecs, energy: EnergyParameters):
+    def __init__(
+        self,
+        vehicle: EVVehicleSpecs,
+        energy: EnergyParameters,
+        maintenance_inflation_rate: float = 0.02,
+    ):
         energy.validate()
         self.vehicle = vehicle
         self.energy = energy
+        self.maintenance_inflation_rate = maintenance_inflation_rate
 
     def annual_energy_consumption(self) -> Dict[str, float]:
         miles = self.energy.annual_miles_driven
@@ -231,20 +420,35 @@ class OperatingCostCalculator:
             + self.vehicle.annual_insurance_cost
         )
 
+    def detailed_operating_costs(self, years: int) -> pd.DataFrame:
+        """Return a detailed operating cost schedule for the analysis horizon."""
+
+        calculator = EVOperatingCostsCalculator(self.vehicle)
+        return calculator.calculate_annual_operating_costs(
+            annual_miles=self.energy.annual_miles_driven,
+            annual_registration=self.vehicle.annual_registration_fee,
+            annual_insurance=self.vehicle.annual_insurance_cost,
+            maintenance_inflation_rate=self.maintenance_inflation_rate,
+            years=years,
+        )
+
     def lifetime_operating_cost(self, years: int) -> Dict[str, float]:
+        schedule = self.detailed_operating_costs(years)
         energy_cost = self.annual_energy_cost() * years
-        maintenance_cost = self.annual_maintenance_cost() * years
-        insurance_cost = self.vehicle.annual_insurance_cost * years
-        registration_cost = self.vehicle.annual_registration_fee * years
+        maintenance_cost = float(schedule["maintenance_cost"].sum())
+        insurance_cost = float(schedule["insurance_cost"].sum())
+        registration_cost = float(schedule["registration_fee"].sum())
+        battery_cost = float(schedule["battery_cost"].sum())
+        tire_cost = float(schedule["tire_replacement"].sum())
+        other_operating = float(schedule["total_operating_cost"].sum())
         return {
             "energy_cost": energy_cost,
             "maintenance_cost": maintenance_cost,
             "insurance_cost": insurance_cost,
             "registration_cost": registration_cost,
-            "total_operating_cost": energy_cost
-            + maintenance_cost
-            + insurance_cost
-            + registration_cost,
+            "battery_cost": battery_cost,
+            "tire_cost": tire_cost,
+            "total_operating_cost": energy_cost + other_operating,
         }
 
 
@@ -366,6 +570,8 @@ class TotalCostOfOwnershipCalculator:
             "total_maintenance_cost": lifetime_operating["maintenance_cost"],
             "total_registration_cost": lifetime_operating["registration_cost"],
             "total_insurance_cost": lifetime_operating["insurance_cost"],
+            "total_battery_cost": lifetime_operating["battery_cost"],
+            "total_tire_cost": lifetime_operating["tire_cost"],
             "total_interest_paid": acquisition_details["total_interest_paid"],
             "residual_value": end_value,
             "total_cost_of_ownership": tco,
