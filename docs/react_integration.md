@@ -131,3 +131,9 @@ export function TcoForm() {
 - Serve the React build via a CDN or reverse proxy and route API calls to the FastAPI backend.
 - Enable auth/rate-limiting at the proxy if exposing the API publicly.
 - Keep caching/memoization in the FastAPI layer for expensive runs (similar to `@st.cache_data` in Streamlit).
+- **Platforms that work well** (pick based on your budget and ops comfort):
+  - **Render** or **Railway**: simplest for a monorepo—one service for FastAPI (build `scripts/api_server.py`) and one static site for the React build. Add a second web service if you want to keep Streamlit public.
+  - **Fly.io**: deploy both FastAPI and Streamlit as separate machines/VMs; good for low latency and regional placements.
+  - **Azure App Service** or **AWS Elastic Beanstalk/Fargate**: use container images and a reverse proxy to route `/ev/*` to FastAPI and `/` to the React build; optionally expose Streamlit behind basic auth.
+  - **Google Cloud Run**: run FastAPI (and optionally Streamlit) as one or two services; host the React static build on Firebase Hosting or Cloud Storage + CDN.
+  - **Static hosting (Netlify/Vercel)**: build React as a static site and point API calls to the hosted FastAPI URL; keep Streamlit internal if you don’t need it public.

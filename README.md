@@ -48,6 +48,14 @@ Three depreciation methods:
 
 The React and Streamlit experiences share the same Python analyzers; Streamlit calls them directly, while React calls them over the API.
 
+## Deployment options (React + FastAPI + Streamlit)
+- **Render/Railway**: simplest monorepo hosting; one service for FastAPI, one static site for React, and an optional Streamlit service.
+- **Fly.io**: lightweight VM-style deploys for FastAPI and Streamlit with regional placement.
+- **AWS Elastic Beanstalk/Fargate** or **Azure App Service**: container-based, add a proxy to route `/ev/*` to FastAPI and `/` to React.
+- **Google Cloud Run**: serverless containers for FastAPI/Streamlit; host React on Firebase Hosting or Cloud Storage + CDN.
+- **Static hosts (Netlify/Vercel)**: serve the React build statically and point API calls to your FastAPI URL; keep Streamlit internal if desired.
+- See `docs/react_integration.md` for wiring guidance.
+
 ### 5. **Total Cost of Ownership (TCO)**
 - Comprehensive cost aggregation
 - Year-by-year breakdown
