@@ -132,6 +132,7 @@ export function TcoForm() {
 - Serve the React build via a CDN or reverse proxy and route API calls to the FastAPI backend.
 - Enable auth/rate-limiting at the proxy if exposing the API publicly.
 - Keep caching/memoization in the FastAPI layer for expensive runs (similar to `@st.cache_data` in Streamlit).
+- **AWS recipe**: use the Dockerfiles in `deploy/aws/`, push to ECR, serve React from S3 + CloudFront, and place FastAPI/Streamlit on ECS Fargate behind an ALB with path-based routing (`/ev/*` for the API). Full steps in `docs/aws_deployment.md`.
 - **Platforms that work well** (pick based on your budget and ops comfort):
   - **Render** or **Railway**: simplest for a monorepo—one service for FastAPI (build `scripts/api_server.py`) and one static site for the React build. Add a second web service if you want to keep Streamlit public.
   - **Fly.io**: deploy both FastAPI and Streamlit as separate machines/VMs; good for low latency and regional placements.
