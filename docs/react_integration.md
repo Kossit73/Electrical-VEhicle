@@ -99,8 +99,9 @@ export function TcoForm() {
     fetch("http://localhost:8000/sample-payloads")
       .then((r) => r.json())
       .then((data) => {
-        setVehicle(data.tco.vehicle);
-        setEnergy(data.tco.energy_parameters);
+        const { tco } = data; // includes a `status` field plus TCO/comparison/sensitivity payloads
+        setVehicle(tco.vehicle);
+        setEnergy(tco.energy_parameters);
       });
   }, []);
 

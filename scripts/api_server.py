@@ -103,7 +103,12 @@ def _build_sample_payloads() -> Dict[str, Any]:
 def sample_payloads() -> Dict[str, Any]:
     """Provide ready-made request bodies for the React client and testing."""
 
-    return {"status": "success", "payloads": _build_sample_payloads()}
+    payloads = _build_sample_payloads()
+
+    # Keep the payloads at the top level so the React examples in the docs can
+    # destructure `tco`, `comparison`, and `sensitivity` directly without
+    # additional nesting.
+    return {"status": "success", **payloads}
 
 
 if __name__ == "__main__":  # pragma: no cover - manual execution helper

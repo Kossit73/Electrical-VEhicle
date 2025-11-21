@@ -44,7 +44,7 @@ Three depreciation methods:
   1. `pip install fastapi uvicorn "pydantic>=1.10,<3"`
   2. `uvicorn scripts.api_server:app --reload --port 8000`
   3. Point your React client at `http://localhost:8000/ev/*` (OpenAPI docs at `/docs`).
-  4. Seed forms with `GET /sample-payloads` or mirror the examples in `docs/react_integration.md`.
+  4. Seed forms with `GET /sample-payloads` (returns `status` plus top-level `tco`, `comparison`, and `sensitivity` payloads) or mirror the examples in `docs/react_integration.md`.
 
 The React and Streamlit experiences share the same Python analyzers; Streamlit calls them directly, while React calls them over the API.
 
