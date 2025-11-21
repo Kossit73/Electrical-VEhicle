@@ -73,7 +73,7 @@ docker push "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$STREAMLIT_REPO:l
 
 ## 8) Optional: Infrastructure as Code
 - **AWS Copilot CLI**: `copilot init`, then define two services (api + streamlit) with path-based routing.
-- **AWS CDK/Terraform**: encode the ALB, ECS services, and CloudFront distribution for repeatable deploys.
+- **AWS CDK/Terraform**: encode the ALB, ECS services, and CloudFront distribution for repeatable deploys. A ready-to-use Terraform + GitHub Actions recipe (OIDC or access keys) lives in `docs/terraform_ci_cd.md`.
 
 ## 9) Validation
 - Open `https://api.yourdomain.com/docs` to confirm FastAPI is reachable.
