@@ -38,6 +38,16 @@ Three depreciation methods:
   - Year 4-5: 8% annually
   - Year 6+: 5% annually
 
+## Frontends: Streamlit or React + FastAPI
+- **Python-native dashboard**: Run `streamlit run streamlit_app.py` for the turnkey analyst experience already in this repo.
+- **React SPA**: Use the FastAPI wrapper (see `scripts/api_server.py`) to expose JSON endpoints that mirror the model’s dataclasses and feed them from a JavaScript UI. Quick-start steps:
+  1. `pip install fastapi uvicorn "pydantic>=1.10,<3"`
+  2. `uvicorn scripts.api_server:app --reload --port 8000`
+  3. Point your React client at `http://localhost:8000/ev/*` (OpenAPI docs at `/docs`).
+  4. Seed forms with `GET /sample-payloads` or mirror the examples in `docs/react_integration.md`.
+
+The React and Streamlit experiences share the same Python analyzers; Streamlit calls them directly, while React calls them over the API.
+
 ### 5. **Total Cost of Ownership (TCO)**
 - Comprehensive cost aggregation
 - Year-by-year breakdown
