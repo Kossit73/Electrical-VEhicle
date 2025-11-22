@@ -50,10 +50,10 @@ The React and Streamlit experiences share the same Python analyzers; Streamlit c
 
 ## Deployment options (React + FastAPI + Streamlit)
 - **AWS ECS (Fargate) + S3/CloudFront**: recommended for AWS—use the Dockerfiles in `deploy/aws/`, push to ECR, serve React from S3 + CloudFront, and route `/ev/*` to the FastAPI task via an ALB. See `docs/aws_deployment.md` for step-by-step commands and `docs/terraform_ci_cd.md` for Terraform + GitHub Actions automation (OIDC or access keys).
+- **Google Cloud Run + Cloud Storage/Firebase Hosting**: serverless option on GCP—deploy FastAPI/Streamlit to Cloud Run, host React on Cloud Storage + Cloud CDN or Firebase Hosting, and add custom domains via Cloud Run mappings or a global HTTPS load balancer. See `docs/gcp_deployment.md` for a full recipe.
 - **Render/Railway**: simplest monorepo hosting; one service for FastAPI, one static site for React, and an optional Streamlit service.
 - **Fly.io**: lightweight VM-style deploys for FastAPI and Streamlit with regional placement.
 - **AWS Elastic Beanstalk/Fargate** or **Azure App Service**: container-based, add a proxy to route `/ev/*` to FastAPI and `/` to React.
-- **Google Cloud Run**: serverless containers for FastAPI/Streamlit; host React on Firebase Hosting or Cloud Storage + CDN.
 - **Static hosts (Netlify/Vercel)**: serve the React build statically and point API calls to your FastAPI URL; keep Streamlit internal if desired.
 - See `docs/react_integration.md` for wiring guidance.
 
