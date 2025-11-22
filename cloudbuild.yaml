@@ -9,7 +9,7 @@ steps:
       - "-t"
       - "${_API_IMAGE}"
       - "-f"
-      - deploy/aws/Dockerfile.api
+      - deploy/gcp/Dockerfile.api
       - .
   - name: gcr.io/cloud-builders/docker
     id: Build Streamlit image

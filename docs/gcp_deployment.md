@@ -45,7 +45,7 @@ Build and push the images using the provided Dockerfiles:
 ```bash
 # FastAPI
 API_IMG="$REGION-docker.pkg.dev/$PROJECT_ID/$API_REPO:latest"
-docker build -f deploy/aws/Dockerfile.api -t $API_IMG .
+docker build -f deploy/gcp/Dockerfile.api -t $API_IMG .
 docker push $API_IMG
 
 # Streamlit (optional)
@@ -54,7 +54,7 @@ docker build -f deploy/aws/Dockerfile.streamlit -t $STREAMLIT_IMG .
 docker push $STREAMLIT_IMG
 ```
 
-> Prefer Cloud Build? Submit with the root `cloudbuild.yaml` so the builder can find the Dockerfiles under `deploy/aws/`:
+> Prefer Cloud Build? Submit with the root `cloudbuild.yaml` so the builder can find the Dockerfiles under `deploy/gcp/` and `deploy/aws/`:
 > ```bash
 > gcloud builds submit --config cloudbuild.yaml \
 >   --substitutions=_API_IMAGE="$API_IMG",_STREAMLIT_IMAGE="$STREAMLIT_IMG" \
