@@ -1,0 +1,25 @@
+# Cloud Build configuration for building FastAPI and Streamlit images
+# Expects substitutions _API_IMAGE and _STREAMLIT_IMAGE for tagging images
+# Example: gcloud builds submit --config cloudbuild.yaml --substitutions=_API_IMAGE=us-central1-docker.pkg.dev/PROJECT/REPO/ev-api:latest,_STREAMLIT_IMAGE=us-central1-docker.pkg.dev/PROJECT/REPO/ev-streamlit:latest .
+steps:
+  - name: gcr.io/cloud-builders/docker
+    id: Build FastAPI image
+    args:
+      - build
+      - "-t"
+      - "${_API_IMAGE}"
+      - "-f"
+      - deploy/gcp/Dockerfile.api
+      - .
+  - name: gcr.io/cloud-builders/docker
+    id: Build Streamlit image
+    args:
+      - build
+      - "-t"
+      - "${_STREAMLIT_IMAGE}"
+      - "-f"
+      - deploy/aws/Dockerfile.streamlit
+      - .
+images:
+  - "${_API_IMAGE}"
+  - "${_STREAMLIT_IMAGE}"
