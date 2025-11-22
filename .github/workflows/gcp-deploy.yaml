@@ -73,6 +73,12 @@ jobs:
         with:
           project_id: ${{ inputs.gcp_project_id }}
 
+      - name: Configure gcloud defaults
+        run: |
+          gcloud config set project "${PROJECT_ID}"
+          gcloud config set run/region "${REGION}"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev"
+
       - name: Build and push images with Cloud Build
         run: |
           API_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${API_REPO}/ev-api:${GITHUB_SHA}"
