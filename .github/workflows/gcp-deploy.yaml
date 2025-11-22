@@ -1,0 +1,106 @@
+name: Deploy to GCP (Cloud Run)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gcp_project_id:
+        description: GCP project ID
+        required: true
+        type: string
+      region:
+        description: GCP region for builds and Cloud Run
+        default: us-central1
+        required: true
+        type: string
+      api_repo:
+        description: Artifact Registry repository name for the FastAPI image
+        default: ev-api
+        required: true
+        type: string
+      streamlit_repo:
+        description: Artifact Registry repository name for the Streamlit image
+        default: ev-streamlit
+        required: true
+        type: string
+      api_service:
+        description: Cloud Run service name for the FastAPI API
+        default: ev-api
+        required: true
+        type: string
+      streamlit_service:
+        description: Cloud Run service name for the Streamlit dashboard
+        default: ev-streamlit
+        required: true
+        type: string
+      deploy_streamlit:
+        description: Also deploy the Streamlit dashboard
+        default: false
+        required: true
+        type: boolean
+      allowed_origins:
+        description: Comma-separated CORS origins for the API
+        default: "*"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ inputs.gcp_project_id }}
+      REGION: ${{ inputs.region }}
+      API_REPO: ${{ inputs.api_repo }}
+      STREAMLIT_REPO: ${{ inputs.streamlit_repo }}
+      API_SERVICE: ${{ inputs.api_service }}
+      STREAMLIT_SERVICE: ${{ inputs.streamlit_service }}
+      ALLOWED_ORIGINS: ${{ inputs.allowed_origins }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ inputs.gcp_project_id }}
+
+      - name: Build and push images with Cloud Build
+        run: |
+          API_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${API_REPO}/ev-api:${GITHUB_SHA}"
+          STREAMLIT_IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${STREAMLIT_REPO}/ev-streamlit:${GITHUB_SHA}"
+          echo "API_IMAGE=${API_IMAGE}" >> "$GITHUB_ENV"
+          echo "STREAMLIT_IMAGE=${STREAMLIT_IMAGE}" >> "$GITHUB_ENV"
+
+          gcloud builds submit --config cloudbuild.yaml \
+            --substitutions=_API_IMAGE="${API_IMAGE}",_STREAMLIT_IMAGE="${STREAMLIT_IMAGE}" \
+            .
+
+      - name: Deploy FastAPI to Cloud Run
+        run: |
+          gcloud run deploy "${API_SERVICE}" \
+            --image "${API_IMAGE}" \
+            --platform managed \
+            --region "${REGION}" \
+            --port 8000 \
+            --allow-unauthenticated \
+            --set-env-vars "ALLOWED_ORIGINS=${ALLOWED_ORIGINS}"
+
+      - name: Deploy Streamlit to Cloud Run
+        if: ${{ inputs.deploy_streamlit }}
+        run: |
+          gcloud run deploy "${STREAMLIT_SERVICE}" \
+            --image "${STREAMLIT_IMAGE}" \
+            --platform managed \
+            --region "${REGION}" \
+            --port 8501 \
+            --allow-unauthenticated \
+            --set-env-vars "STREAMLIT_SERVER_BASEURLPATH=/"

@@ -17,6 +17,14 @@ gcloud services enable \
   compute.googleapis.com
 ```
 
+## Run the GitHub Actions workflow (optional)
+If you prefer CI/CD over local commands, trigger `.github/workflows/gcp-deploy.yaml` with `workflow_dispatch`. It uses OIDC to
+authenticate (secrets `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT_EMAIL`) and needs inputs for the project/region
+and Artifact Registry repos. The workflow:
+- Builds FastAPI and Streamlit images via Cloud Build using the root `cloudbuild.yaml`.
+- Tags images with the current commit SHA and pushes them to Artifact Registry.
+- Deploys the FastAPI container to Cloud Run, optionally deploying Streamlit if `deploy_streamlit` is true.
+
 ## 1) Build and push container images to Artifact Registry
 Create an Artifact Registry repository (region can be any GCP region you plan to run Cloud Run in):
 ```bash
