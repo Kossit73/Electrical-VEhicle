@@ -54,7 +54,12 @@ docker build -f deploy/aws/Dockerfile.streamlit -t $STREAMLIT_IMG .
 docker push $STREAMLIT_IMG
 ```
 
-> You can substitute Docker with Cloud Build. Be sure to point Cloud Build at the correct Dockerfile, e.g. `gcloud builds submit --tag $API_IMG --file deploy/aws/Dockerfile.api .` (and likewise for the Streamlit image).
+> Prefer Cloud Build? Submit with the root `cloudbuild.yaml` so the builder can find the Dockerfiles under `deploy/aws/`:
+> ```bash
+> gcloud builds submit --config cloudbuild.yaml \
+>   --substitutions=_API_IMAGE="$API_IMG",_STREAMLIT_IMAGE="$STREAMLIT_IMG" \
+>   .
+> ```
 
 ## 2) Deploy FastAPI to Cloud Run
 Deploy the API container on port 8000 and allow HTTPS ingress:
