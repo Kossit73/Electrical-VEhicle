@@ -1,0 +1,16 @@
+model,battery_kwh,efficiency_wh_per_km,curb_weight_kg,drag_coefficient,top_speed_kmh,range_km
+Aurora City,50,150,1650,0.29,150,310
+Aurora Touring,75,165,1900,0.27,180,420
+Aurora Sport,82,180,2050,0.26,210,410
+Bolt Urban,40,140,1500,0.30,140,280
+Bolt Plus,58,155,1725,0.28,165,340
+Bolt XL,72,170,1880,0.29,175,360
+Comet Eco,45,135,1480,0.31,145,295
+Comet Touring,65,160,1820,0.29,170,360
+Comet Grand,90,185,2100,0.27,200,430
+Dynamo Compact,38,130,1420,0.32,135,270
+Dynamo Plus,55,150,1680,0.30,160,320
+Eclipse Base,60,165,1780,0.29,170,330
+Eclipse Premium,85,175,1980,0.28,195,410
+Falcon S,95,190,2150,0.26,220,440
+Falcon GT,110,205,2300,0.25,235,455
